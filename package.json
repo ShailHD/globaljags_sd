@@ -1,0 +1,19 @@
+{
+  "name": "globaljags_project",
+  "version": "1.0.0",
+  "description": "**GlobalJags** is a cloud-based application that is intended to demonstrate how to integrate several cloud services together.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google-cloud/storage": "^7.7.0",
+    "fs-extra": "^11.2.0",
+    "os": "^0.1.2",
+    "path": "^0.12.7",
+    "sharp": "^0.33.2"
+  }
+}

@@ -1,42 +1,49 @@
-const { Storage } = require('@google-cloud/storage');
-const storage = new Storage();
-const sharp = require('sharp');
+// Updated index.js
 
-const UPLOADS_BUCKET_NAME = 'sp24-41200-shail-globaljags-uploads';
-const THUMBNAILS_BUCKET_NAME = 'sp24-41200-shail-globaljags-thumbnails';
-const FINAL_BUCKET_NAME = 'sp24-41200-shail-globaljags-final';
+// Imports
+const fs = require('fs');
+const getExif = require('exif-async');
+const parseDMS = require('parse-dms');
 
-exports.generateThumbnail = async (event, context) => {
-  const file = event.data;
-  const contentType = file.contentType;
-  const fileName = file.name;
-  const fileGeneration = file.generation;
+// Entry Point Function
+async function extractExif() {
+    console.log("Script started");
+    try {
+        let gpsObject = await readExifData('./china1.jpeg'); // Ensure the path to the image is correct
+        if (gpsObject) {
+            console.log(gpsObject);
+            let gpsDecimal = getGPSCoordinates(gpsObject);
+            console.log('Decimal Coordinates:', gpsDecimal);
+        } else {
+            console.log("No GPS data found or unable to read EXIF.");
+        }
+    } catch (error) {
+        console.error("Error in extractExif:", error);
+    }
+}
 
-  // Check if the file is an image
-  if (contentType !== 'image/jpeg' && contentType !== 'image/png') {
-    console.log(`The file ${fileName} is not an image.`);
-    // Delete the non-image file
-    await storage.bucket(UPLOADS_BUCKET_NAME).file(fileName).delete();
-    console.log(`Non-image file ${fileName} deleted.`);
-    return;
-  }
+// Helper Functions
+async function readExifData(localFile) {
+    try {
+        const exifData = await getExif(localFile);
+        return exifData.gps;
+    } catch(err) {
+        console.error('Error reading EXIF data:', err);
+        return null;
+    }
+}
 
-  // Copy the original image to the final bucket
-  await storage.bucket(UPLOADS_BUCKET_NAME).file(fileName)
-    .copy(storage.bucket(FINAL_BUCKET_NAME).file(fileName));
-  console.log(`File ${fileName} copied to final bucket.`);
+function getGPSCoordinates(gpsData) {
+    if (!gpsData) {
+        console.log("No GPS Data available");
+        return {};
+    }
+    const latString = `${gpsData.GPSLatitude[0]}:${gpsData.GPSLatitude[1]}:${gpsData.GPSLatitude[2]}${gpsData.GPSLatitudeRef}`;
+    const lonString = `${gpsData.GPSLongitude[0]}:${gpsData.GPSLongitude[1]}:${gpsData.GPSLongitude[2]}${gpsData.GPSLongitudeRef}`;
 
-  // Create a thumbnail for the image
-  const thumbnailFileName = `thumbnail-${fileGeneration}${contentType === 'image/jpeg' ? '.jpg' : '.png'}`;
-  const thumbnail = await sharp(file.data)
-    .resize({ width: 200 })
-    .toBuffer();
+    const degCoords = parseDMS(`${latString} ${lonString}`);
+    return degCoords;
+}
 
-  // Save the thumbnail to the thumbnails bucket
-  await storage.bucket(THUMBNAILS_BUCKET_NAME).file(thumbnailFileName).save(thumbnail);
-  console.log(`Thumbnail ${thumbnailFileName} saved to thumbnails bucket.`);
-
-  // Delete the original file from the uploads bucket
-  await storage.bucket(UPLOADS_BUCKET_NAME).file(fileName).delete();
-  console.log(`Original file ${fileName} deleted from uploads bucket.`);
-};
+// Start the process
+extractExif();

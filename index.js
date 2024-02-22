@@ -1,38 +1,49 @@
 // Imports
-const {Storage} = require('@google-cloud/storage');
-const path = require('path');
-const os = require('os');
-const fs = require('fs-extra');
+const getExif = require('exif-async');
+const parseDMS = require('parse-dms');
 
-// Entry point for the Cloud Function
-exports.generateThumbnail = async (event, context) => {
-  const storage = new Storage();
-  const file = event;
-  const sourceBucketName = file.bucket;
-  const sourceFileName = file.name;
-  const contentType = file.contentType;
-  const generation = file.generation;
+// Entry Point Function
+async function extractExif() {
+    try {
+        let gpsObject = await readExifData('china1.jpeg');
+        if (gpsObject) {
+            let gpsDecimal = getGPSCoordinates(gpsObject);
+            if (gpsDecimal) {
+                console.log(gpsDecimal);
+                console.log(`Latitude: ${gpsDecimal.lat}`);
+                console.log(`Longitude: ${gpsDecimal.lon}`);
+            } else {
+                console.log('No GPS coordinates could be extracted.');
+            }
+        } else {
+            console.log('No EXIF data found.');
+        }
+    } catch (error) {
+        console.error('Error in extractExif:', error);
+    }
+}
 
-  // Buckets
-  const sourceBucket = storage.bucket(sourceBucketName);
-  const finalBucket = storage.bucket('sp24-41200-shail-globaljags-final'); 
+// Helper Functions
+async function readExifData(localFile) {
+    try {
+        let exifData = await getExif(localFile);
+        return exifData.gps || null;
+    } catch (error) {
+        console.error('Error reading EXIF data:', error);
+        return null;
+    }
+}
 
-  
-  if (!['image/jpeg', 'image/png'].includes(contentType)) {
-    console.log(`Deleting non-image file: ${sourceFileName} of type ${contentType}`);
-    await sourceBucket.file(sourceFileName).delete();
-    return;
-  }
+function getGPSCoordinates(gpsData) {
+    try {
+        const latString = `${gpsData.GPSLatitude[0]}:${gpsData.GPSLatitude[1]}:${gpsData.GPSLatitude[2]}${gpsData.GPSLatitudeRef}`;
+        const lonString = `${gpsData.GPSLongitude[0]}:${gpsData.GPSLongitude[1]}:${gpsData.GPSLongitude[2]}${gpsData.GPSLongitudeRef}`;
+        return parseDMS(`${latString} ${lonString}`);
+    } catch (error) {
+        console.error('Error parsing GPS coordinates:', error);
+        return null;
+    }
+}
 
-  // Unique filename for the final image
-  const finalFileName = `${generation}.${contentType.split('/')[1]}`; 
-  const destinationFilePath = path.join('final', finalFileName);
-
-  // This code will copy the image to the final bucket
-  await sourceBucket.file(sourceFileName).copy(finalBucket.file(destinationFilePath));
-  console.log(`File ${sourceFileName} copied to ${destinationFilePath}`);
-
-  // This code will delete the original file from the uploads bucket
-  await sourceBucket.file(sourceFileName).delete();
-  console.log(`Deleted original file: ${sourceFileName} from uploads bucket`);
-};
+// Run the function for testing purposes (not needed in actual GCF)
+extractExif();

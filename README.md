@@ -11,7 +11,7 @@ This project will be deployed on the *Google Cloud Platform (GCP)* using the cre
 ### Create a Google Cloud Project
 1. Create a NEW Google Cloud Project. The name must be unique, but it should be something like `sp24-41200-username-globaljags`
 2. Create THREE new buckets in Cloud Storage:
-    1. sp24-41200-elliott-globaljags-uploads
+    1. sp24-41200-elliott-globaljags-uploadscdcd
     2. sp24-41200-elliott-globaljags-thumbnails
     3. sp24-41200-elliott-globaljags-final
 

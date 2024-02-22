@@ -1,77 +1,78 @@
 // Imports
 const { Storage } = require('@google-cloud/storage');
-const { Firestore } = require('@google-cloud/firestore');
-const getExif = require('exif-async');
-const parseDMS = require('parse-dms');
 const path = require('path');
-const os = require('os');
 const fs = require('fs-extra');
+const os = require('os');
+const sharp = require('sharp');
 
-// This code will initialize Google Cloud clients
-const storage = new Storage();
-const firestore = new Firestore({ projectId: 'sp24-41200-shaild-globaljags' });
+// Google Cloud Storage configuration
+const PROJECT_ID = 'sp24-41200-shaild-globaljags';
+const UPLOADS_BUCKET_NAME = 'sp24-41200-shail-globaljags-uploads';
+const THUMBNAILS_BUCKET_NAME = 'sp24-41200-shail-globaljags-thumbnails';
+const FINAL_BUCKET_NAME = 'sp24-41200-shail-globaljags-final';
 
-// This Function will generate the public URL of a file in a bucket
-function getPublicUrl(bucketName, fileName) {
-  return `https://storage.googleapis.com/${bucketName}/${fileName}`;
-}
+// Entry point function
+exports.generateThumbnail = async (file, context) => {
+  const gcsFile = file;
+  const storage = new Storage({ projectId: PROJECT_ID });
+  const sourceBucket = storage.bucket(UPLOADS_BUCKET_NAME);
+  const thumbnailsBucket = storage.bucket(THUMBNAILS_BUCKET_NAME);
+  const finalBucket = storage.bucket(FINAL_BUCKET_NAME);
 
-// This is the cloud Function Entry Point
-exports.processImage = async (event, context) => {
-  const file = event;
-  const contentType = file.contentType;
-  const fileName = file.name;
-  const generation = file.generation;
-  const bucketName = file.bucket;
+  // Logging the version of the Cloud Function
+  const version = process.env.K_REVISION;
+  console.log(`Running Cloud Function version ${version}`);
 
-  // This code will check if the uploaded file is an image
-  if (!['image/jpeg', 'image/png'].includes(contentType)) {
-    console.log(`Deleting non-image file: ${fileName} of type ${contentType}`);
-    await storage.bucket(bucketName).file(fileName).delete();
-    return;
+  // Processing file information
+  console.log(`File name: ${gcsFile.name}`);
+  console.log(`Generation number: ${gcsFile.generation}`);
+  console.log(`Content type: ${gcsFile.contentType}`);
+
+  // Reject images that are not jpeg or png files
+  let fileExtension = '';
+  let validFile = false;
+
+  if (gcsFile.contentType === 'image/jpeg') {
+    console.log('This is a JPG file.');
+    fileExtension = 'jpg';
+    validFile = true;
+  } else if (gcsFile.contentType === 'image/png') {
+    console.log('This is a PNG file.');
+    fileExtension = 'png';
+    validFile = true;
+  } else {
+    console.log('This is not a valid file type.');
   }
 
-  // This code will proceed with valid image files
-  const tempFilePath = path.join(os.tmpdir(), fileName);
-  await storage.bucket(bucketName).file(fileName).download({ destination: tempFilePath });
+  // Download, process, and upload the image if it's a valid file
+  if (validFile) {
+    // Constructing filenames and paths
+    const finalFileName = `${gcsFile.generation}.${fileExtension}`;
+    const workingDir = path.join(os.tmpdir(), 'thumbs');
+    const tempFilePath = path.join(workingDir, finalFileName);
 
-  // This code will read EXIF data for GPS information
-  const exifData = await getExif(tempFilePath);
-  const gpsData = exifData.gps;
-  let gpsDecimal = null;
-  if (gpsData) {
-    gpsDecimal = getGPSCoordinates(gpsData);
+    // Ensuring the working directory exists
+    await fs.ensureDir(workingDir);
+
+    // Downloading the original file
+    await sourceBucket.file(gcsFile.name).download({ destination: tempFilePath });
+
+    // Uploading the original file to the final bucket
+    await finalBucket.upload(tempFilePath);
+
+    // Generating and uploading the thumbnail
+    const thumbName = `thumb@64_${finalFileName}`;
+    const thumbPath = path.join(workingDir, thumbName);
+    await sharp(tempFilePath).resize(64).withMetadata().toFile(thumbPath);
+    await thumbnailsBucket.upload(thumbPath);
+
+    // Cleaning up the local filesystem
+    await fs.remove(workingDir);
   }
 
-  // This code will extract the image name from the file path
-  const imageName = path.basename(tempFilePath);
-
-  // URLs for the images stored in Cloud Storage
-  const thumbnailUrl = getPublicUrl('sp24-41200-shail-globaljags-thumbnails', `${generation}.jpeg`);
-  const finalImageUrl = getPublicUrl('sp24-41200-shail-globaljags-final', `${generation}.jpeg`);
-
-  // This code will create a document in Firestore
-  const photoDocument = {
-    imageName, // The name of the image file
-    thumbnailUrl,
-    finalImageUrl,
-    latitude: gpsDecimal ? gpsDecimal.lat : null,
-    longitude: gpsDecimal ? gpsDecimal.lon : null,
-    uploaded: Firestore.Timestamp.now()
-  };
-
-  // This code will write to Firestore
-  await firestore.collection('photos').add(photoDocument);
-
-  // This code will cleanup local file
-  await fs.remove(tempFilePath);
-
-  console.log(`Processed file ${fileName} with Firestore document:`, photoDocument);
+  // Deleting the original file from the uploads bucket
+  if (validFile) {
+    await sourceBucket.file(gcsFile.name).delete();
+    console.log(`Deleted original file: ${gcsFile.name}`);
+  }
 };
-
-// This function will parse GPS EXIF to decimal
-function getGPSCoordinates(gpsData) {
-  const latString = `${gpsData.GPSLatitude[0]}:${gpsData.GPSLatitude[1]}:${gpsData.GPSLatitude[2]}${gpsData.GPSLatitudeRef}`;
-  const lonString = `${gpsData.GPSLongitude[0]}:${gpsData.GPSLongitude[1]}:${gpsData.GPSLongitude[2]}${gpsData.GPSLongitudeRef}`;
-  return parseDMS(`${latString} ${lonString}`);
-}

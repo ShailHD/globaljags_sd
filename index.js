@@ -1,78 +1,42 @@
-// Imports
 const { Storage } = require('@google-cloud/storage');
-const path = require('path');
-const fs = require('fs-extra');
-const os = require('os');
+const storage = new Storage();
 const sharp = require('sharp');
 
-// Google Cloud Storage configuration
-const PROJECT_ID = 'sp24-41200-shaild-globaljags';
 const UPLOADS_BUCKET_NAME = 'sp24-41200-shail-globaljags-uploads';
 const THUMBNAILS_BUCKET_NAME = 'sp24-41200-shail-globaljags-thumbnails';
 const FINAL_BUCKET_NAME = 'sp24-41200-shail-globaljags-final';
 
-// Entry point function
-exports.generateThumbnail = async (file, context) => {
-  const gcsFile = file;
-  const storage = new Storage({ projectId: PROJECT_ID });
-  const sourceBucket = storage.bucket(UPLOADS_BUCKET_NAME);
-  const thumbnailsBucket = storage.bucket(THUMBNAILS_BUCKET_NAME);
-  const finalBucket = storage.bucket(FINAL_BUCKET_NAME);
+exports.generateThumbnail = async (event, context) => {
+  const file = event.data;
+  const contentType = file.contentType;
+  const fileName = file.name;
+  const fileGeneration = file.generation;
 
-  // Logging the version of the Cloud Function
-  const version = process.env.K_REVISION;
-  console.log(`Running Cloud Function version ${version}`);
-
-  // Processing file information
-  console.log(`File name: ${gcsFile.name}`);
-  console.log(`Generation number: ${gcsFile.generation}`);
-  console.log(`Content type: ${gcsFile.contentType}`);
-
-  // Reject images that are not jpeg or png files
-  let fileExtension = '';
-  let validFile = false;
-
-  if (gcsFile.contentType === 'image/jpeg') {
-    console.log('This is a JPG file.');
-    fileExtension = 'jpg';
-    validFile = true;
-  } else if (gcsFile.contentType === 'image/png') {
-    console.log('This is a PNG file.');
-    fileExtension = 'png';
-    validFile = true;
-  } else {
-    console.log('This is not a valid file type.');
+  // Check if the file is an image
+  if (contentType !== 'image/jpeg' && contentType !== 'image/png') {
+    console.log(`The file ${fileName} is not an image.`);
+    // Delete the non-image file
+    await storage.bucket(UPLOADS_BUCKET_NAME).file(fileName).delete();
+    console.log(`Non-image file ${fileName} deleted.`);
+    return;
   }
 
-  // Download, process, and upload the image if it's a valid file
-  if (validFile) {
-    // Constructing filenames and paths
-    const finalFileName = `${gcsFile.generation}.${fileExtension}`;
-    const workingDir = path.join(os.tmpdir(), 'thumbs');
-    const tempFilePath = path.join(workingDir, finalFileName);
+  // Copy the original image to the final bucket
+  await storage.bucket(UPLOADS_BUCKET_NAME).file(fileName)
+    .copy(storage.bucket(FINAL_BUCKET_NAME).file(fileName));
+  console.log(`File ${fileName} copied to final bucket.`);
 
-    // Ensuring the working directory exists
-    await fs.ensureDir(workingDir);
+  // Create a thumbnail for the image
+  const thumbnailFileName = `thumbnail-${fileGeneration}${contentType === 'image/jpeg' ? '.jpg' : '.png'}`;
+  const thumbnail = await sharp(file.data)
+    .resize({ width: 200 })
+    .toBuffer();
 
-    // Downloading the original file
-    await sourceBucket.file(gcsFile.name).download({ destination: tempFilePath });
+  // Save the thumbnail to the thumbnails bucket
+  await storage.bucket(THUMBNAILS_BUCKET_NAME).file(thumbnailFileName).save(thumbnail);
+  console.log(`Thumbnail ${thumbnailFileName} saved to thumbnails bucket.`);
 
-    // Uploading the original file to the final bucket
-    await finalBucket.upload(tempFilePath);
-
-    // Generating and uploading the thumbnail
-    const thumbName = `thumb@64_${finalFileName}`;
-    const thumbPath = path.join(workingDir, thumbName);
-    await sharp(tempFilePath).resize(64).withMetadata().toFile(thumbPath);
-    await thumbnailsBucket.upload(thumbPath);
-
-    // Cleaning up the local filesystem
-    await fs.remove(workingDir);
-  }
-
-  // Deleting the original file from the uploads bucket
-  if (validFile) {
-    await sourceBucket.file(gcsFile.name).delete();
-    console.log(`Deleted original file: ${gcsFile.name}`);
-  }
+  // Delete the original file from the uploads bucket
+  await storage.bucket(UPLOADS_BUCKET_NAME).file(fileName).delete();
+  console.log(`Original file ${fileName} deleted from uploads bucket.`);
 };
